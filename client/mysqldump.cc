@@ -4344,20 +4344,48 @@ static void dump_table(const char *table, const char *db, const uchar *hash_key,
     dynstr_append_checked(&query_string, filename);
     dynstr_append_checked(&query_string, "'");
 
+    /*
+      The default (utf8mb4) --default-character-set means no character set
+      conversion, i.e. every column value is written verbatim in its own
+      character set. An explicitly requested charset is respected (Bug
+      #30946): text columns are converted to it, while binary values are
+      still written verbatim (see select_export::send_data()).
+    */
     dynstr_append_checked(&query_string, " /*!50138 CHARACTER SET ");
     dynstr_append_checked(&query_string, default_charset == mysql_universal_client_charset ?
                                          my_charset_bin.coll_name.str : /* backward compatibility */
                                          default_charset);
     dynstr_append_checked(&query_string, " */");
 
-    if (fields_terminated || enclosed || opt_enclosed || escaped)
-      dynstr_append_checked(&query_string, " FIELDS");
+    if (fields_terminated || enclosed || opt_enclosed || escaped ||
+        lines_terminated)
+    {
+      /*
+        The user has explicitly specified at least one field/line option:
+        use the user-provided format as before.
+      */
+      if (fields_terminated || enclosed || opt_enclosed || escaped)
+        dynstr_append_checked(&query_string, " FIELDS");
 
-    add_load_option(&query_string, " TERMINATED BY ", fields_terminated);
-    add_load_option(&query_string, " ENCLOSED BY ", enclosed);
-    add_load_option(&query_string, " OPTIONALLY ENCLOSED BY ", opt_enclosed);
-    add_load_option(&query_string, " ESCAPED BY ", escaped);
-    add_load_option(&query_string, " LINES TERMINATED BY ", lines_terminated);
+      add_load_option(&query_string, " TERMINATED BY ", fields_terminated);
+      add_load_option(&query_string, " ENCLOSED BY ", enclosed);
+      add_load_option(&query_string, " OPTIONALLY ENCLOSED BY ", opt_enclosed);
+      add_load_option(&query_string, " ESCAPED BY ", escaped);
+      add_load_option(&query_string, " LINES TERMINATED BY ", lines_terminated);
+    }
+    else
+    {
+      /*
+        Pin the default field/line format explicitly so that the file
+        format does not depend on the session sql_mode: with
+        sql_mode=NO_BACKSLASH_ESCAPES an INTO OUTFILE without an explicit
+        ESCAPED BY does not escape special characters, which corrupts
+        binary data containing \t, \n or backslashes.
+      */
+      dynstr_append_checked(&query_string,
+                            " FIELDS TERMINATED BY '\t' ENCLOSED BY ''"
+                            " ESCAPED BY '\\' LINES TERMINATED BY '\n'");
+    }
 
     if (opt_header)
     {

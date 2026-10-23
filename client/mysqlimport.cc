@@ -717,8 +717,6 @@ int table_load_params::load_data(MYSQL *mysql)
         DBUG_RETURN(1);
     }
   }
-  if (exec_sql(mysql, "SET collation_database=binary"))
-    DBUG_RETURN(1);
   to_unix_path(hard_path);
   if (verbose)
   {
@@ -739,15 +737,44 @@ int table_load_params::load_data(MYSQL *mysql)
   end= strmov(end, " INTO TABLE ");
 
   end= strmov(end,full_tablename.c_str());
+  /*
+    Always interpret the data file as binary (i.e. without any character
+    set conversion) to match what mysqldump --tab/--dir writes: every
+    column value is stored verbatim in its own character set. This is a
+    statement-level replacement for the former session-wide
+    'SET collation_database=binary' workaround (MDEV-34890).
+  */
+  end= strmov(end, " CHARACTER SET binary");
 
-  if (fields_terminated || enclosed || opt_enclosed || escaped)
+  if (fields_terminated || enclosed || opt_enclosed || escaped ||
+      lines_terminated)
+  {
+    /*
+      The user has explicitly specified at least one field/line option:
+      use the user-provided format as before.
+    */
+    if (fields_terminated || enclosed || opt_enclosed || escaped)
       end= strmov(end, " FIELDS");
-  end= add_load_option(end, fields_terminated, " TERMINATED BY");
-  end= add_load_option(end, enclosed, " ENCLOSED BY");
-  end= add_load_option(end, opt_enclosed,
+    end= add_load_option(end, fields_terminated, " TERMINATED BY");
+    end= add_load_option(end, enclosed, " ENCLOSED BY");
+    end= add_load_option(end, opt_enclosed,
 		       " OPTIONALLY ENCLOSED BY");
-  end= add_load_option(end, escaped, " ESCAPED BY");
-  end= add_load_option(end, lines_terminated, " LINES TERMINATED BY");
+    end= add_load_option(end, escaped, " ESCAPED BY");
+    end= add_load_option(end, lines_terminated, " LINES TERMINATED BY");
+  }
+  else
+  {
+    /*
+      Pin the default field/line format explicitly so that the file
+      format does not depend on the session sql_mode: with
+      sql_mode=NO_BACKSLASH_ESCAPES a LOAD DATA without an explicit
+      ESCAPED BY does not unescape special characters, which corrupts
+      binary data containing \t, \n or backslashes. The pinned format
+      matches the one that mysqldump --tab/--dir now always writes.
+    */
+    end= strmov(end, " FIELDS TERMINATED BY '\t' ENCLOSED BY ''"
+                    " ESCAPED BY '\\' LINES TERMINATED BY '\n'");
+  }
   if (opt_ignore_lines >= 0)
     end= strmov(longlong10_to_str(opt_ignore_lines, 
 				  strmov(end, " IGNORE "),10), " LINES");

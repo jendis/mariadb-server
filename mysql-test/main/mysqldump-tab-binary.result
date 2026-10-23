@@ -1,0 +1,71 @@
+CREATE TABLE t1 (id INT PRIMARY KEY, tb TINYBLOB, b BLOB, mb MEDIUMBLOB, lb LONGBLOB, bin BINARY(8), vb VARBINARY(32), txt VARCHAR(100));
+INSERT INTO t1 VALUES (1, 'a\0b', 'tab\there', 'new\nline', 'back\\slash', 'abcdefgh', 'vb\0value', 'plain text');
+INSERT INTO t1 VALUES (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+CREATE TABLE t2 (id INT PRIMARY KEY, b BLOB, bin BINARY(8), vb VARBINARY(32), j JSON, txt VARCHAR(100) CHARSET utf8);
+INSERT INTO t2 VALUES (1, x'0001087F80FF', CONCAT(x'FF', '0000000'), x'80FF5C', '{"a": [1, 2]}', 'héllo');
+#
+# 1. Round-trip with --tab and default settings
+#
+# Content of t1.txt (special characters are escaped):
+1	a\0b	tab\there	new\nline	back\\slash	abcdefgh	vb\0value	plain text
+2	\N	\N	\N	\N	\N	\N	\N
+RENAME TABLE t1 TO t1_orig, t2 TO t2_orig;
+SELECT COUNT(*) AS matching_rows FROM t1 JOIN t1_orig USING (id) WHERE t1.tb <=> t1_orig.tb AND t1.b <=> t1_orig.b AND t1.mb <=> t1_orig.mb AND t1.lb <=> t1_orig.lb AND t1.bin <=> t1_orig.bin AND t1.vb <=> t1_orig.vb AND t1.txt <=> t1_orig.txt;
+matching_rows
+2
+SELECT COUNT(*) AS matching_rows FROM t2 JOIN t2_orig USING (id) WHERE t2.b <=> t2_orig.b AND t2.bin <=> t2_orig.bin AND t2.vb <=> t2_orig.vb AND t2.j <=> t2_orig.j AND t2.txt <=> t2_orig.txt;
+matching_rows
+1
+DROP TABLE t1, t2;
+RENAME TABLE t1_orig TO t1, t2_orig TO t2;
+#
+# 2. Round-trip with user-specified --fields-enclosed-by
+#
+RENAME TABLE t1 TO t1_orig, t2 TO t2_orig;
+SELECT COUNT(*) AS matching_rows FROM t1 JOIN t1_orig USING (id) WHERE t1.tb <=> t1_orig.tb AND t1.b <=> t1_orig.b AND t1.mb <=> t1_orig.mb AND t1.lb <=> t1_orig.lb AND t1.bin <=> t1_orig.bin AND t1.vb <=> t1_orig.vb AND t1.txt <=> t1_orig.txt;
+matching_rows
+2
+SELECT COUNT(*) AS matching_rows FROM t2 JOIN t2_orig USING (id) WHERE t2.b <=> t2_orig.b AND t2.bin <=> t2_orig.bin AND t2.vb <=> t2_orig.vb AND t2.j <=> t2_orig.j AND t2.txt <=> t2_orig.txt;
+matching_rows
+1
+DROP TABLE t1, t2;
+RENAME TABLE t1_orig TO t1, t2_orig TO t2;
+#
+# 3. Round-trip under sql_mode=NO_BACKSLASH_ESCAPES
+#    (the field/line format must not depend on the session sql_mode)
+#
+SET @old_sql_mode= @@GLOBAL.sql_mode;
+SET GLOBAL sql_mode= CONCAT(@@GLOBAL.sql_mode, ',NO_BACKSLASH_ESCAPES');
+RENAME TABLE t1 TO t1_orig, t2 TO t2_orig;
+SELECT COUNT(*) AS matching_rows FROM t1 JOIN t1_orig USING (id) WHERE t1.tb <=> t1_orig.tb AND t1.b <=> t1_orig.b AND t1.mb <=> t1_orig.mb AND t1.lb <=> t1_orig.lb AND t1.bin <=> t1_orig.bin AND t1.vb <=> t1_orig.vb AND t1.txt <=> t1_orig.txt;
+matching_rows
+2
+SELECT COUNT(*) AS matching_rows FROM t2 JOIN t2_orig USING (id) WHERE t2.b <=> t2_orig.b AND t2.bin <=> t2_orig.bin AND t2.vb <=> t2_orig.vb AND t2.j <=> t2_orig.j AND t2.txt <=> t2_orig.txt;
+matching_rows
+1
+SET GLOBAL sql_mode= @old_sql_mode;
+DROP TABLE t1, t2;
+RENAME TABLE t1_orig TO t1, t2_orig TO t2;
+#
+# 4. Round-trip with --default-character-set=utf8
+#    (binary values must not be converted to the dump charset)
+#
+RENAME TABLE t1 TO t1_orig, t2 TO t2_orig;
+SELECT COUNT(*) AS matching_rows FROM t1 JOIN t1_orig USING (id) WHERE t1.tb <=> t1_orig.tb AND t1.b <=> t1_orig.b AND t1.mb <=> t1_orig.mb AND t1.lb <=> t1_orig.lb AND t1.bin <=> t1_orig.bin AND t1.vb <=> t1_orig.vb AND t1.txt <=> t1_orig.txt;
+matching_rows
+2
+SELECT COUNT(*) AS matching_rows FROM t2 JOIN t2_orig USING (id) WHERE t2.b <=> t2_orig.b AND t2.bin <=> t2_orig.bin AND t2.vb <=> t2_orig.vb AND t2.j <=> t2_orig.j AND t2.txt <=> t2_orig.txt;
+matching_rows
+1
+DROP TABLE t1, t2;
+RENAME TABLE t1_orig TO t1, t2_orig TO t2;
+#
+# 5. Round-trip with --dir and mariadb-import --table
+#
+RENAME TABLE t1 TO t1_orig;
+SELECT COUNT(*) AS matching_rows FROM t1 JOIN t1_orig USING (id) WHERE t1.tb <=> t1_orig.tb AND t1.b <=> t1_orig.b AND t1.mb <=> t1_orig.mb AND t1.lb <=> t1_orig.lb AND t1.bin <=> t1_orig.bin AND t1.vb <=> t1_orig.vb AND t1.txt <=> t1_orig.txt;
+matching_rows
+2
+DROP TABLE t1;
+RENAME TABLE t1_orig TO t1;
+DROP TABLE t1, t2;

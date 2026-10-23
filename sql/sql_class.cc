@@ -3630,8 +3630,15 @@ int select_export::send_data(List<Item> &items)
     bool enclosed = (exchange->enclosed->length() &&
                      (!exchange->opt_enclosed || result_type == STRING_RESULT));
     res=item->str_result(&tmp);
+    /*
+      Don't convert binary (BLOB/BINARY and other binary-charset) values to
+      the export charset: the conversion is lossy, it replaces unconvertable
+      bytes with '?'. Binary data is instead copied verbatim, just like it
+      is when no CHARACTER SET clause is given.
+    */
     if (res && !my_charset_same(write_cs, res->charset()) &&
-        !my_charset_same(write_cs, &my_charset_bin))
+        !my_charset_same(write_cs, &my_charset_bin) &&
+        !my_charset_same(res->charset(), &my_charset_bin))
     {
       String_copier copier;
       const char *error_pos;

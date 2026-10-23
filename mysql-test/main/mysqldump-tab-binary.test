@@ -1,0 +1,104 @@
+# MDEV-38735 mysqldump --tab/--dir + mariadb-import: binary data round-trip
+#
+# Test that binary data (BLOB/BINARY values with embedded NULs, tabs,
+# newlines, backslashes and bytes >= 0x80) survives a mysqldump
+# --tab/--dir + mariadb-import round-trip without any special options,
+# independently of the session sql_mode and of --default-character-set.
+
+--source include/not_embedded.inc
+
+CREATE TABLE t1 (id INT PRIMARY KEY, tb TINYBLOB, b BLOB, mb MEDIUMBLOB, lb LONGBLOB, bin BINARY(8), vb VARBINARY(32), txt VARCHAR(100));
+INSERT INTO t1 VALUES (1, 'a\0b', 'tab\there', 'new\nline', 'back\\slash', 'abcdefgh', 'vb\0value', 'plain text');
+INSERT INTO t1 VALUES (2, NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+CREATE TABLE t2 (id INT PRIMARY KEY, b BLOB, bin BINARY(8), vb VARBINARY(32), j JSON, txt VARCHAR(100) CHARSET utf8);
+INSERT INTO t2 VALUES (1, x'0001087F80FF', CONCAT(x'FF', '0000000'), x'80FF5C', '{"a": [1, 2]}', 'héllo');
+
+--echo #
+--echo # 1. Round-trip with --tab and default settings
+--echo #
+--exec $MYSQL_DUMP --skip-comments --tab=$MYSQLTEST_VARDIR/tmp test t1 t2
+--echo # Content of t1.txt (special characters are escaped):
+--cat_file $MYSQLTEST_VARDIR/tmp/t1.txt
+RENAME TABLE t1 TO t1_orig, t2 TO t2_orig;
+--exec $MYSQL test < $MYSQLTEST_VARDIR/tmp/t1.sql
+--exec $MYSQL test < $MYSQLTEST_VARDIR/tmp/t2.sql
+--exec $MYSQL_IMPORT --silent test $MYSQLTEST_VARDIR/tmp/t1.txt $MYSQLTEST_VARDIR/tmp/t2.txt
+SELECT COUNT(*) AS matching_rows FROM t1 JOIN t1_orig USING (id) WHERE t1.tb <=> t1_orig.tb AND t1.b <=> t1_orig.b AND t1.mb <=> t1_orig.mb AND t1.lb <=> t1_orig.lb AND t1.bin <=> t1_orig.bin AND t1.vb <=> t1_orig.vb AND t1.txt <=> t1_orig.txt;
+SELECT COUNT(*) AS matching_rows FROM t2 JOIN t2_orig USING (id) WHERE t2.b <=> t2_orig.b AND t2.bin <=> t2_orig.bin AND t2.vb <=> t2_orig.vb AND t2.j <=> t2_orig.j AND t2.txt <=> t2_orig.txt;
+DROP TABLE t1, t2;
+RENAME TABLE t1_orig TO t1, t2_orig TO t2;
+--remove_file $MYSQLTEST_VARDIR/tmp/t1.sql
+--remove_file $MYSQLTEST_VARDIR/tmp/t1.txt
+--remove_file $MYSQLTEST_VARDIR/tmp/t2.sql
+--remove_file $MYSQLTEST_VARDIR/tmp/t2.txt
+
+--echo #
+--echo # 2. Round-trip with user-specified --fields-enclosed-by
+--echo #
+--exec $MYSQL_DUMP --skip-comments --fields-enclosed-by='"' --tab=$MYSQLTEST_VARDIR/tmp test t1 t2
+RENAME TABLE t1 TO t1_orig, t2 TO t2_orig;
+--exec $MYSQL test < $MYSQLTEST_VARDIR/tmp/t1.sql
+--exec $MYSQL test < $MYSQLTEST_VARDIR/tmp/t2.sql
+--exec $MYSQL_IMPORT --silent --fields-enclosed-by='"' test $MYSQLTEST_VARDIR/tmp/t1.txt $MYSQLTEST_VARDIR/tmp/t2.txt
+SELECT COUNT(*) AS matching_rows FROM t1 JOIN t1_orig USING (id) WHERE t1.tb <=> t1_orig.tb AND t1.b <=> t1_orig.b AND t1.mb <=> t1_orig.mb AND t1.lb <=> t1_orig.lb AND t1.bin <=> t1_orig.bin AND t1.vb <=> t1_orig.vb AND t1.txt <=> t1_orig.txt;
+SELECT COUNT(*) AS matching_rows FROM t2 JOIN t2_orig USING (id) WHERE t2.b <=> t2_orig.b AND t2.bin <=> t2_orig.bin AND t2.vb <=> t2_orig.vb AND t2.j <=> t2_orig.j AND t2.txt <=> t2_orig.txt;
+DROP TABLE t1, t2;
+RENAME TABLE t1_orig TO t1, t2_orig TO t2;
+--remove_file $MYSQLTEST_VARDIR/tmp/t1.sql
+--remove_file $MYSQLTEST_VARDIR/tmp/t1.txt
+--remove_file $MYSQLTEST_VARDIR/tmp/t2.sql
+--remove_file $MYSQLTEST_VARDIR/tmp/t2.txt
+
+--echo #
+--echo # 3. Round-trip under sql_mode=NO_BACKSLASH_ESCAPES
+--echo #    (the field/line format must not depend on the session sql_mode)
+--echo #
+SET @old_sql_mode= @@GLOBAL.sql_mode;
+SET GLOBAL sql_mode= CONCAT(@@GLOBAL.sql_mode, ',NO_BACKSLASH_ESCAPES');
+--exec $MYSQL_DUMP --skip-comments --tab=$MYSQLTEST_VARDIR/tmp test t1 t2
+RENAME TABLE t1 TO t1_orig, t2 TO t2_orig;
+--exec $MYSQL test < $MYSQLTEST_VARDIR/tmp/t1.sql
+--exec $MYSQL test < $MYSQLTEST_VARDIR/tmp/t2.sql
+--exec $MYSQL_IMPORT --silent test $MYSQLTEST_VARDIR/tmp/t1.txt $MYSQLTEST_VARDIR/tmp/t2.txt
+SELECT COUNT(*) AS matching_rows FROM t1 JOIN t1_orig USING (id) WHERE t1.tb <=> t1_orig.tb AND t1.b <=> t1_orig.b AND t1.mb <=> t1_orig.mb AND t1.lb <=> t1_orig.lb AND t1.bin <=> t1_orig.bin AND t1.vb <=> t1_orig.vb AND t1.txt <=> t1_orig.txt;
+SELECT COUNT(*) AS matching_rows FROM t2 JOIN t2_orig USING (id) WHERE t2.b <=> t2_orig.b AND t2.bin <=> t2_orig.bin AND t2.vb <=> t2_orig.vb AND t2.j <=> t2_orig.j AND t2.txt <=> t2_orig.txt;
+SET GLOBAL sql_mode= @old_sql_mode;
+DROP TABLE t1, t2;
+RENAME TABLE t1_orig TO t1, t2_orig TO t2;
+--remove_file $MYSQLTEST_VARDIR/tmp/t1.sql
+--remove_file $MYSQLTEST_VARDIR/tmp/t1.txt
+--remove_file $MYSQLTEST_VARDIR/tmp/t2.sql
+--remove_file $MYSQLTEST_VARDIR/tmp/t2.txt
+
+--echo #
+--echo # 4. Round-trip with --default-character-set=utf8
+--echo #    (binary values must not be converted to the dump charset)
+--echo #
+--exec $MYSQL_DUMP --skip-comments --default-character-set=utf8 --tab=$MYSQLTEST_VARDIR/tmp test t1 t2
+RENAME TABLE t1 TO t1_orig, t2 TO t2_orig;
+--exec $MYSQL test < $MYSQLTEST_VARDIR/tmp/t1.sql
+--exec $MYSQL test < $MYSQLTEST_VARDIR/tmp/t2.sql
+--exec $MYSQL_IMPORT --silent test $MYSQLTEST_VARDIR/tmp/t1.txt $MYSQLTEST_VARDIR/tmp/t2.txt
+SELECT COUNT(*) AS matching_rows FROM t1 JOIN t1_orig USING (id) WHERE t1.tb <=> t1_orig.tb AND t1.b <=> t1_orig.b AND t1.mb <=> t1_orig.mb AND t1.lb <=> t1_orig.lb AND t1.bin <=> t1_orig.bin AND t1.vb <=> t1_orig.vb AND t1.txt <=> t1_orig.txt;
+SELECT COUNT(*) AS matching_rows FROM t2 JOIN t2_orig USING (id) WHERE t2.b <=> t2_orig.b AND t2.bin <=> t2_orig.bin AND t2.vb <=> t2_orig.vb AND t2.j <=> t2_orig.j AND t2.txt <=> t2_orig.txt;
+DROP TABLE t1, t2;
+RENAME TABLE t1_orig TO t1, t2_orig TO t2;
+--remove_file $MYSQLTEST_VARDIR/tmp/t1.sql
+--remove_file $MYSQLTEST_VARDIR/tmp/t1.txt
+--remove_file $MYSQLTEST_VARDIR/tmp/t2.sql
+--remove_file $MYSQLTEST_VARDIR/tmp/t2.txt
+
+--echo #
+--echo # 5. Round-trip with --dir and mariadb-import --table
+--echo #
+--mkdir $MYSQLTEST_VARDIR/tmp/dumpdir
+--exec $MYSQL_DUMP --skip-comments --dir=$MYSQLTEST_VARDIR/tmp/dumpdir test
+RENAME TABLE t1 TO t1_orig;
+--exec $MYSQL_IMPORT --silent --table=test.t1 --dir=$MYSQLTEST_VARDIR/tmp/dumpdir
+SELECT COUNT(*) AS matching_rows FROM t1 JOIN t1_orig USING (id) WHERE t1.tb <=> t1_orig.tb AND t1.b <=> t1_orig.b AND t1.mb <=> t1_orig.mb AND t1.lb <=> t1_orig.lb AND t1.bin <=> t1_orig.bin AND t1.vb <=> t1_orig.vb AND t1.txt <=> t1_orig.txt;
+DROP TABLE t1;
+RENAME TABLE t1_orig TO t1;
+--rmdir $MYSQLTEST_VARDIR/tmp/dumpdir
+
+DROP TABLE t1, t2;
