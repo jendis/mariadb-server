@@ -195,6 +195,31 @@ In `table_load_params::load_data()` (~lines 827-848):
    requires commit/PR/Jira sync), squash to a single commit, convert the PR back
    from draft.
 
+### Status addendum (2026-10-23, after implementing)
+
+The implementation is complete on branch `hexblob-fix` (commits `107820b14f1`
+feature + `6b2ee110d77` plan.md). The following validation steps could NOT be
+performed in the authoring environment (no cmake/network/build available) and
+MUST be done in a proper build environment before submitting:
+
+1. Re-record `main.ctype_gbk_export_import`: the server-side fix changes the
+   `b1 BLOB` rows of the OUTFILE/mysqldump corruption matrix (binary values are
+   now written verbatim instead of being mangled to '?' under the gbk/utf8
+   CHARACTER SET clauses). This is an intended behavior change; regenerate with
+   `./mtr --record main.ctype_gbk_export_import` (test needs gbk charset + POSIX
+   locale zh_CN.gbk, otherwise it self-skips).
+2. Run and, if needed, re-record the new test: `./mtr --record
+   main.mysqldump-tab-binary` (the .result was hand-written; verify it).
+3. Run the regression suites over all changed paths:
+   `./mtr main.mysqldump main.mysqldump-header main.mysqldump-win
+   main.mariadb-import main.outfile_loaddata main.loaddata main.outfile
+   main.mysqldump-offline suite/gcol/main_mysqldump suite/versioning/data`.
+4. Full compile check on all buildbot hosts.
+5. Drop the two plan.md commits from the final PR branch (working documentation,
+   not meant for upstream); keep exactly one feature commit. Update PR text and
+   the Jira MDEV-38735 description to match the commit message.
+
+
 ## Key references
 
 - PR: https://github.com/MariaDB/server/pull/4610 (draft, "need feedback")
