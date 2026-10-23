@@ -128,6 +128,29 @@ In the tab/--dir mode query building (~lines 4367-4386):
 3. Verify interaction with `--headers` (the `UNION ALL` header trick, mysqldump.cc:4388-4398)
    and with user `--fields-*` overrides.
 
+### Implementation addendum (2026-10-23, deviations found during implementation)
+
+Two revisions to the plan above, discovered while implementing:
+
+1. **Keep the CHARACTER SET selection in mysqldump --tab as-is** (utf8mb4 → binary
+   special case, otherwise the user-requested charset). Pinning it to binary would
+   regress the intentionally-supported Bug #30946 behavior ("mysqldump silently
+   ignores --default-character-set when used with --tab", tested in
+   mysql-test/main/mysqldump.test:2123+ and outfile_loaddata.test: text columns are
+   intentionally converted to the requested dump charset).
+2. **Root-cause fix for binary conversion moved to the server**: the blob
+   '?'-corruption under `--default-character-set=utf8` etc. comes from
+   `select_export::send_data` (sql/sql_class.cc:3633) converting *binary-charset*
+   values (BLOB/BINARY) to the export charset. The fix skips that conversion for
+   binary-charset values so they are always written verbatim, whatever the
+   `CHARACTER SET` clause is. Existing charset conversion tests only use text
+   columns, so no existing result changes. Text columns keep Bug #30946 semantics.
+3. **mariadb-import**: the `SET collation_database=binary` session workaround
+   (MDEV-34890) was replaced by an explicit statement-level
+   `CHARACTER SET binary` clause in the LOAD DATA statement (plus the pinned
+   FIELDS/LINES defaults), preserving the same effective behavior statement-scoped.
+
+
 ### Phase 3 — mariadb-import fix (client/mysqlimport.cc)
 
 In `table_load_params::load_data()` (~lines 827-848):
